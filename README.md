@@ -1,88 +1,67 @@
-The data sources used for the PDV-ML 2024Q4 model are appropriate, sufficient, and aligned with the model’s business objectives. The model relies on enterprise-managed sources including EPDI/PTD (property transactions), TRAX (foreclosure sales), EDL-EDW (loan attributes), CAP (AVM values), and Oasis Gold (BPO values). These sources are refreshed on a monthly or daily cadence and are governed under standard enterprise data SLAs. The data is reliable, complete, and representative of the REO population being modeled.
-The documentation indicates that data for model development and scoring is fully aligned with the disposition date (or current scoring date, for ongoing prediction), ensuring temporal consistency. The data also undergoes filtering, deduplication, and transformation based on business logic and modeling needs. Feature derivation methods, such as AVM imputation, KNN-based local comps, and year-built proxies, are transparently documented. Data sufficiency is further demonstrated by consistent 100% hit rates across all validation cycles.
-No standalone external datasets beyond enterprise-managed sources are used in model development. However, the model integrates third-party data (e.g., Freddie Mac and Black Knight transactions) through the EPDI/PTD and TRAX databases, which are centrally managed and incorporated into the enterprise data infrastructure. These external sources are subject to internal deduplication and quality checks to ensure consistency. The inclusion of these third-party records is justified for enhancing REO data volume and diversity, particularly in non-Fannie segments, and their use is clearly described and validated.
+4. Conceptual Soundness
+4.1 Model Methodology
+i. Model Methodology
 
-The model uses a curated data frame composed of over 50 variables spanning property characteristics, loan attributes, transaction details, and derived features. Source systems include EDPI, EDL-EDW, CAP, and TRAX. Feature selection is informed by correlation to the target (REO sale price), business judgment, and data completeness. Variables with high missingness or low predictive value (e.g., cash, tract_id) are excluded.
-Sampling spans three years of REO transactions for the final model, and five years for intermediate models (e.g., KNN and AVM imputation). This ensures balanced temporal coverage and mitigates seasonality and volume-related bias. Each monthly cycle includes ~10,000 transactions, and sampling excludes records with invalid or missing sale prices. Final model inputs are numeric and compatible with XGBoost, following preprocessing steps.
-The dataset structure is well-documented, and upstream system linkages are stable and governed, with no licensing or access concerns identified.
-There are no fine-tuning or customizations applicable under the definition of GenAI models. However, intermediate model components (KNN and AVM Imputation) are re-trained periodically using updated data and retuned hyperparameters. These models are treated as part of the broader deterministic modeling pipeline rather than standalone ML applications. The final model configuration is consistent with prior versions and enhancements in the 2024Q4 release are limited to expanded training windows, revised sampling logic, and recalibrated hyperparameters.
+The PDV-ML 2024Q4 model is a machine learning-based model designed to estimate distressed property values using REO transaction data. It incorporates two intermediate models—KNN for localized neighborhood features and XGBoost for AVM imputation—feeding into a final XGBoost valuation model. This modular design enhances predictive performance by combining spatial sensitivity with imputation robustness.
 
-The model aggregates REO transactions from two primary sources: the EPDI/PTD database, which includes all historical property transactions (regular and foreclosure), and the TRAX database, which is restricted to foreclosure transactions but is updated more frequently. These data sources are aggregated using street address and ZIP code as the composite key. Where loan ID is available, it is used as the primary key; otherwise, address-based mapping is applied.
-The aggregation process consolidates property, loan, AVM, tax, and BPO records for each REO transaction to create a unified and enriched sample. Data from third-party providers (Freddie Mac and Black Knight) is incorporated through EPDI/PTD and TRAX, and prioritized using predefined logic. The aggregation approach is appropriate and ensures that all required features are available for training and scoring, while minimizing redundancy and conflicts across systems.
-A multi-step data cleaning protocol is applied to ensure sample integrity:
-Duplicate Removal: REO transactions that appear in both EPDI and TRAX are deduplicated using logic based on transaction date gaps (365-day threshold), price similarity, and a data provider hierarchy (Fannie > Freddie > Black Knight).
+The model's design reflects best practices in the property valuation domain, combining market-driven assumptions with automation and repeatability. It avoids subjective expert opinion by relying on historical REO transactions and engineered features, aligning with Fannie Mae's business need for consistent and reliable accounting valuation of REO and CDV inventory. The structure also supports quarterly retraining and aligns with industry standards in predictive modeling, ensuring adequate mathematical rigor and computational efficiency.
 
+ii. Consistency of Model Methodology with Academic Literature and Industry Practice
 
-Invalid Records: Transactions with zero or negative REO prices are filtered out. For properties with more than three records across providers or unresolved conflicts, all records are dropped.
+The methodology is consistent with established academic and applied practices. The use of KNN for spatial proximity analysis and XGBoost for imputation and valuation is well-supported in real estate price modeling literature. The modeling techniques are widely used in both academia and industry for regression tasks involving large datasets with missing values and nonlinear relationships.
 
+iii. Consideration of Alternate Methodologies
 
-Missing Data Handling: Where critical fields like AVM or year-built are missing, proxy values are substituted—e.g., tax assessment year is used when loan year-built is unavailable.
+Traditional valuation methods such as sales comparison, cost approach, and income approach were considered conceptually, but were not selected due to their reliance on expert judgment, limited automation, and potential inconsistency across assets. The PDV-ML 2024Q4 model was preferred for its ability to generalize from past REO data, automate valuation at scale, and support repeatable accounting exercises. The selected machine learning structure balances model complexity, explainability, and predictive performance.
 
+iv. Model Retraining
 
-Categorical Normalization: Variables such as pool_ind and occ_stat are transformed to binary or numeric indicators. For pool indicator, ‘N’ and missing values are treated as no-pool; for no_stors, rare fractional values (<0.7% of records) are retained and left for the model to interpret.
+The retraining process for PDV-ML 2024Q4 includes updates to sample size (increased to 36 months), hyperparameter tuning (e.g., XGBoost objective changed from reg:gamma to reg:squarederror), and feature expansion. Retraining is triggered by defined criteria including changes in data availability and performance degradation. The acceptance criteria for the recalibrated model include PPE20 improvement ≥3%, WAPE <20%, PPE30 reduction ≥3%, and P90 <18%. All criteria were met, validating the retraining cadence and methodology.
 
+4.2 Model Specification
+i. Model Estimation Technique
 
-All assumptions and cleaning steps are consistent with the prior production version and are explicitly documented in the MDD.
-The raw variables are processed and transformed into model-ready features through a combination of domain logic and statistical methods:
-AVM Imputation: Missing AVM values are imputed using an intermediate XGBoost model, trained on properties with valid AVM values. The model excludes cscore_r per MRM guidance and is tuned using BayesSearchCV.
+The model employs XGBoost regression as the main estimation method, using engineered and imputed features from intermediate KNN and AVM models. Relationships among variables are captured via tree-based boosting, which inherently models nonlinearities and interactions. XGBoost was chosen for its robustness, scalability, and effectiveness on large, sparse datasets common in distressed asset modeling.
 
+ii. Model Segmentation
 
-KNN Local Features: Three engineered features—REO price per sqft, raw REO price, and haircut (REO/AVM)—are generated using KNN based on Cartesian coordinates. Neighbor counts are optimized (k=5 for comps, k=0 for haircut in final version) based on performance metrics.
+The model does not implement segmentation. Instead, it treats the entire U.S. REO/CDV population as a single modeling market. This approach is justified given the accounting use case and the need for nationwide consistency. Business rationale supports this decision to ensure that the same model logic is applied across the book of business without introducing segmentation-induced volatility.
 
+iii. Variable Selection Process
 
-Derived Dates: Variables such as loan_age, time_since_disp, and days_REO_to_DISP are derived from original and disposition dates.
+Initial variable selection was based on domain relevance and feature engineering. A total of 58 features from PDV-ML 1.0 were reduced to 26 in PDV-ML 2024Q4 using a combination of SHAP value importance, WAPE contribution, and overfitting analysis. Feature inclusion/exclusion decisions were driven by iterative testing and performance trade-offs, ensuring retained variables were both predictive and stable.
 
+4.3 Business Assumptions
+i. Key Business Assumptions
 
-Final Formatting: All features are transformed to numeric format, as required by XGBoost. Categorical fields are encoded as integers or dummy values where needed.
+Key Business Assumption	MRM Evaluation
+REO data from non-Fannie Mae properties can be used to model Fannie Mae REO values	Reasonable, given market-driven pricing
+Cash offers do not affect REO values	Acceptable—REO market operates independently of cash offer presence
+REO offer price reflects final sales price	Valid—use of offer price as proxy for final value is supported by data review
 
+All assumptions were reviewed and found to be consistent with market behavior and appropriately documented.
 
-Transformations are appropriate, transparent, and support model estimation and downstream interpretability.
-Comprehensive data quality checks were implemented during model development to ensure completeness, consistency, and relevance of the final dataset. All source systems (EPDI, TRAX, EDL-EDW, CAP) are enterprise-governed and refreshed regularly, with defined SLAs ensuring timely updates. Final datasets used for training and scoring achieved a 100% hit rate across monthly cycles, demonstrating full record resolution.
-Business rules were applied to filter invalid records (e.g., non-positive REO sale prices), deduplicate overlapping transactions across data providers, and convert categorical indicators (e.g., pool, occupancy status) into numeric form for model ingestion. These transformations are clearly documented and aligned with modeling standards. Issues arising from third-party data dependencies (e.g., missing AVM or year-built) were addressed using proxy fields or imputation models, with rationales justified and tested.
-Summary statistics reported in the MDD confirm data sufficiency and representativeness. Monthly training samples include approximately 10,000 transactions, covering a balanced distribution across time. The three-year window used for training ensures seasonal diversity, reducing market-cycle bias. AVM imputation is applied to fewer than 5% of records, and categorical encoding preserves data integrity.
-Performance metrics such as PPE20 and PPE30 improved significantly over the prior version, reflecting data quality and relevance. No material issues were observed in the sample distribution, frequency of key attributes, or outlier behavior.
-Several data proxies were used appropriately in the model:
-AVM Values: For records missing AVM (~4–5%), a dedicated XGBoost-based imputation model fills the gap. The model is trained on complete records and excludes confidence scores (cscore_r) per MRM feedback.
+ii. Non-Key Business Assumptions
 
+Non-Key Business Assumption	MRM Evaluation
+PDV-ML model can only be applied to primary loans within the U.S.	Aligned with intended use
+Model values are limited to accounting purposes, not lending decisions	Clearly communicated
 
-Year Built: If the year built from loan data is missing, it is substituted using the tax assessment year. This ensures consistency across older properties or missing originations.
+iii. Business Assumptions Identified by MRM
 
+MRM Identified Key Business Assumptions	MRM Evaluation
+None	N/A
 
-Pool Indicator: High missingness (~94%) is observed. All null and ‘N’ values are treated as no-pool (binary value 0), with ‘Y’ as pool-present (value 1), based on field expert guidance.
+4.4 In-Model Overlays
+In-Model Overlay Description	MRM Evaluation
+N/A	Overlays are not applicable to this model
 
+Overall Evaluation of In-Model Overlays
+No overlays are used in the PDV-ML 2024Q4 model, which simplifies governance and enhances transparency.
 
-These proxies are well-justified and mitigate potential biases. They do not materially distort the model’s predictive behavior or fairness.
-Data representativeness is preserved by using a recent 3-year window for final model training. This balances seasonality, avoids pandemic-era shocks, and maintains alignment with current market conditions. All training data is disposition-aligned and scoring data uses the accounting month as a proxy for disposition.
-Correlations among variables were assessed to ensure relevance. Features with near-zero correlation to the target or redundant relationship with other variables (e.g., tract_id, std_use_cd, cash) were excluded. Variable distributions reflect a realistic cross-section of Fannie Mae’s REO portfolio.
-Partial dependence plots and exploratory statistics indicate that key features (e.g., AVM, orig_val, sqft) drive model output without evidence of bias or instability across time or segment.
-No image, video, textual, or high-dimensional unstructured data is used in this model. All input features are structured, tabular variables derived from loan and property datasets. Therefore, this section is not applicable (N/A).
+4.5 AI/ML Model Refinement
+Refinements for the PDV-ML 2024Q4 model include hyperparameter tuning, removal of weak features, and the elimination of the trend adjustment mechanism (set to neutral bounds). These updates were driven by performance monitoring and did not involve a change in methodology. No alternate AI/ML refinements were applied.
 
-The model employs purposive sampling of REO sales and disposition transactions to train on the most relevant and recent market behavior. For the 2024Q4 version, the training dataset includes a 36-month window (March 2021 to March 2024) of REO transactions, an extension from the prior 26-month window used in earlier versions. This adjustment was made to balance seasonal effects and ensure each calendar month is equally represented.
-Intermediate models such as KNN and AVM imputation use a broader five-year window to capture neighborhood-level variability. Invalid transactions (e.g., zero or missing REO price) are excluded, and duplicated transactions across data providers are resolved using predefined logic.
-This approach is appropriate for the model’s objective of estimating current distressed property values under changing market conditions.
-A comparative analysis was conducted to assess representativeness of the sampled data against the broader REO population. Features showing weak correlation to the target or redundancy with stronger variables were excluded (e.g., tract_id, cash). Visualizations and statistics indicate that the sample is broadly representative in terms of property type, location, and loan characteristics.
-The 36-month training window reduces recency bias while avoiding distortions from pandemic-era transactions. Seasonal balance is achieved by selecting three full years rather than most recent months only.
-3.4.3 Sampling Methods Impact on Model Performance
-The extended training window improved model performance substantially. Out-of-sample testing shows:
-PPE20 (accuracy) improved to 75–80% vs. 44–52% in the prior version.
-
-
-PPE30 (tail error) reduced to 12–16% vs. 34–42% previously.
-
-
-WAPE and WPPE metrics are closer to zero, indicating more stable and precise predictions.
-
-
-In-sample 100-fold cross-validation confirms similar gains. The new sampling logic contributes directly to performance consistency and robustness across cycles.
-Two primary data limitations were identified and appropriately mitigated:
-Missing AVM Values: AVM, the most predictive feature, is missing in ~4–5% of records. A separate imputation model using XGBoost fills these gaps effectively. The model is tuned using non-missing data and excludes confidence score variables per MRM guidance.
-
-
-High Missingness in Pool Indicator: Around 94% of pool values are missing or marked as 'N'. Based on business logic and expert input, all missing values and 'N' are grouped as no-pool (value = 0), and 'Y' as pool-present (value = 1).
-
-
-Other missing features like year-built are addressed using tax proxy data. Categorical variables are transformed into numeric formats to comply with XGBoost input constraints. These mitigations are reasonable and do not materially impact the model's predictive capability.
-The model data used in the PDV-ML 2024Q4 version is deemed appropriate, sufficient, and well-aligned with the model’s objectives. All source systems are enterprise-managed with adequate update frequencies and documented transformations. Sampling methodology is well-justified, and feature engineering steps—such as AVM imputation and KNN-based comps—are documented and validated.
-Mitigations for data limitations are appropriate and consistently applied. Performance improvements in both in-sample and out-of-sample testing support the adequacy of the data. No significant concerns are noted regarding representativeness, accuracy, or stability.
-MRM concludes that the model data is reasonable for use in model development and scoring for the current cycle.
+4.6 Conceptual Soundness Conclusions
+The PDV-ML 2024Q4 model demonstrates strong conceptual soundness. The methodology is aligned with industry practice and academic standards, the model structure is modular and rigorous, and the business assumptions are well-supported. The validation results confirm that the model meets precision, accuracy, and robustness criteria appropriate for its use case in distressed asset valuation for accounting purposes.
 
